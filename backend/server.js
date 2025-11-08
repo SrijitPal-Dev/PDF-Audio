@@ -1,5 +1,5 @@
 const express = require('express');
-const cors = require('cors');
+// CORS is handled by custom middleware below - no need for cors library
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -12,63 +12,106 @@ const app = express();
 const PORT = process.env.PORT || 5001;
 
 // Middleware
-// CORS configuration - allow requests from React dev server and production
+// CORS configuration - explicitly set Access-Control-Allow-Origin header
 const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   process.env.FRONTEND_URL
 ].filter(Boolean); // Remove undefined values
 
+// Helper function to check if origin should be allowed
+function isOriginAllowed(origin) {
+  if (!origin) return false;
+  
+  // Allow localhost in development
+  if (process.env.NODE_ENV !== 'production') {
+    if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
+      return true;
+    }
+  }
+  
+  // Check exact match in allowed origins
+  if (allowedOrigins.indexOf(origin) !== -1) {
+    return true;
+  }
+  
+  // Allow any Vercel domain (for preview deployments)
+  if (origin.includes('.vercel.app')) {
+    console.log('CORS: Allowing Vercel domain:', origin);
+    return true;
+  }
+  
+  // If FRONTEND_URL is not set in production, allow any origin (for testing)
+  if (!process.env.FRONTEND_URL && process.env.NODE_ENV === 'production') {
+    console.warn('CORS: FRONTEND_URL not set, allowing origin:', origin);
+    return true;
+  }
+  
+  return false;
+}
+
 // Log allowed origins for debugging
 console.log('CORS Configuration:');
 console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
 console.log('Allowed Origins:', allowedOrigins);
+console.log('Note: Vercel domains (*.vercel.app) are automatically allowed');
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, Postman, curl, etc.)
-    if (!origin) {
-      console.log('CORS: Allowing request with no origin');
-      return callback(null, true);
+// Custom CORS middleware to explicitly set Access-Control-Allow-Origin header
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Determine which origin to allow
+  let allowedOrigin = null;
+  
+  if (origin) {
+    if (isOriginAllowed(origin)) {
+      allowedOrigin = origin;
     }
-    
-    console.log('CORS: Request from origin:', origin);
-    
-    // In development, allow all localhost origins
-    if (process.env.NODE_ENV !== 'production') {
-      if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
-        console.log('CORS: Allowing localhost origin (development)');
-        return callback(null, true);
-      }
-    }
-    
-    // Check if origin is in allowed list
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      console.log('CORS: Allowing origin (in allowed list)');
-      callback(null, true);
+  }
+  
+  // Explicitly set Access-Control-Allow-Origin header
+  if (allowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    console.log('CORS: Set Access-Control-Allow-Origin to:', allowedOrigin);
+  } else if (origin) {
+    // If we have an origin but it's not allowed, still allow it in development/testing
+    if (process.env.NODE_ENV !== 'production' || !process.env.FRONTEND_URL) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      console.log('CORS: Set Access-Control-Allow-Origin to (permissive):', origin);
     } else {
-      // If FRONTEND_URL is not set, be more permissive (for testing)
-      if (!process.env.FRONTEND_URL && process.env.NODE_ENV === 'production') {
-        console.warn('CORS: FRONTEND_URL not set, allowing origin (testing mode)');
-        console.warn('CORS: Please set FRONTEND_URL environment variable for security');
-        return callback(null, true);
-      }
-      console.warn(`CORS: Blocked origin: ${origin}`);
-      console.warn(`CORS: Allowed origins: ${allowedOrigins.join(', ')}`);
-      callback(new Error(`Not allowed by CORS. Origin: ${origin}`));
+      // Strict mode: block the origin
+      console.error('CORS: Blocked origin:', origin);
+      console.error('CORS: Allowed origins:', allowedOrigins);
+      return res.status(403).json({ error: 'Not allowed by CORS', origin: origin });
     }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Content-Length', 'Content-Type']
-};
-
-app.use(cors(corsOptions));
-
-// Handle preflight requests explicitly
-app.options('*', cors(corsOptions));
+  } else if (allowedOrigins.length > 0) {
+    // Fallback to first allowed origin
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigins[0]);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    console.log('CORS: Set Access-Control-Allow-Origin to (fallback):', allowedOrigins[0]);
+  } else {
+    // No origin and no allowed origins: allow all (credentials must be false)
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    // Note: Cannot set credentials to true with wildcard origin
+    console.log('CORS: Set Access-Control-Allow-Origin to: * (no credentials)');
+  }
+  
+  // Set other required CORS headers
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Type');
+  
+  // Handle preflight OPTIONS requests
+  if (req.method === 'OPTIONS') {
+    console.log('CORS: Handling OPTIONS preflight request from:', origin);
+    return res.status(200).end();
+  }
+  
+  next();
+});
 
 app.use(express.json());
 app.use(express.static('uploads'));
