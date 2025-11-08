@@ -1,0 +1,8 @@
+node_modules/
+uploads/
+audio/
+temp/
+database.sqlite
+.env
+*.log
+
