@@ -12,14 +12,51 @@ const app = express();
 const PORT = process.env.PORT || 5001;
 
 // Middleware
-// CORS configuration - allow requests from React dev server
+// CORS configuration - allow requests from React dev server and production
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  process.env.FRONTEND_URL
+].filter(Boolean); // Remove undefined values
+
+// Log allowed origins for debugging
+console.log('CORS Configuration:');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+console.log('Allowed Origins:', allowedOrigins);
+
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, Postman, etc.) or from localhost
-    if (!origin || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
+    // Allow requests with no origin (like mobile apps, Postman, curl, etc.)
+    if (!origin) {
+      console.log('CORS: Allowing request with no origin');
+      return callback(null, true);
+    }
+    
+    console.log('CORS: Request from origin:', origin);
+    
+    // In development, allow all localhost origins
+    if (process.env.NODE_ENV !== 'production') {
+      if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
+        console.log('CORS: Allowing localhost origin (development)');
+        return callback(null, true);
+      }
+    }
+    
+    // Check if origin is in allowed list
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      console.log('CORS: Allowing origin (in allowed list)');
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      // If FRONTEND_URL is not set, be more permissive (for testing)
+      if (!process.env.FRONTEND_URL && process.env.NODE_ENV === 'production') {
+        console.warn('CORS: FRONTEND_URL not set, allowing origin (testing mode)');
+        console.warn('CORS: Please set FRONTEND_URL environment variable for security');
+        return callback(null, true);
+      }
+      console.warn(`CORS: Blocked origin: ${origin}`);
+      console.warn(`CORS: Allowed origins: ${allowedOrigins.join(', ')}`);
+      callback(new Error(`Not allowed by CORS. Origin: ${origin}`));
     }
   },
   credentials: true,
@@ -429,7 +466,8 @@ app.use((req, res) => {
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`API available at http://localhost:${PORT}/api`);
-  console.log(`CORS enabled for: http://localhost:3000`);
+  console.log(`CORS enabled for: ${allowedOrigins.join(', ') || 'All origins (FRONTEND_URL not set)'}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
 server.on('error', (err) => {
